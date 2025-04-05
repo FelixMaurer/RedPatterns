@@ -1,11 +1,11 @@
 /* Linear Percoll gradient kernel */
-#define PL 30
+#define PL 8.0
 __global__ void CuKernelGrad(double* percoll, double t)
 {
     // get indices
     int i = blockIdx.x*blockDim.x + threadIdx.x;
-    double x = IX * double(i);
-    percoll[i] =  (x-xShift-gradL/2)/(gradL/2)*PL/2;
+    double x = IZ * double(i);
+    percoll[i] =  (x-zShift-gradL/2)/(gradL/2)*PL/2;
 }
 __global__ void CuKernelWing(double* percoll, double* gradWing, double t)
 {
@@ -16,7 +16,7 @@ __global__ void CuKernelWing(double* percoll, double* gradWing, double t)
     double x1,x2;
     r3 = (percoll[wingL]-percoll[wingL-1]);
     r2 = percoll[wingL];
-    r1 = r2-50;
+    r1 = r2-10;
     x1 = 20;
     x2 = wingL;                                                 
     if(percoll[int(x1)] < r1)

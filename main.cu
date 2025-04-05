@@ -7,7 +7,7 @@
 #include "src/functions.cu"
 
 // main function
-int main(void)
+int main(int argc, char *argv[])
 {
     // detect cuda device
     cudaDeviceProp prop;
@@ -16,6 +16,8 @@ int main(void)
     checkCuda( cudaChooseDevice( &cudaDevice, &prop) );
     printf("\nDevice Name: %s\n", prop.name);
     printf("Compute Capability: %d.%d\n\n", prop.major, prop.minor);
+    // read parameter arguments from command line
+    readParameters(argc, argv);
     // run simulation
     runSim();
     return 0;
