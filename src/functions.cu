@@ -53,7 +53,7 @@ void saveNVecToDrive(double* f, char* outFileName, int n)
 }
 /* kernel function */
 #define fLJ(r,sigma) (4*U*(12*pow(sigma,12)/pow(r,13)-6*pow(sigma,6)/pow(r,7)))
-#define g(r,d,sigmaC) (8.41e4*exp(-pow(r-d,2)/(2*pow(sigmaC,2))))
+#define g(r,d,sigmaC) (4e7*exp(-pow(r-d,2)/(2*pow(sigmaC,2))))
 void genConvKernel(){
     // compute effective potential 
     double kernelL = (double(kernelN)-1)*IZ/subDiv;
