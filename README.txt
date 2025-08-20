@@ -15,7 +15,7 @@ condor_submit -i condor_docker_interactive.sub
 (2) compilation
 (3) ./red_patterns 111.15e-18 0.02 5.00000000e-04 1200.0 3000 1.80000000e-10 1e-11 0
 
-tested on Tesla P100-PCIE-16GB (5300 s runtime) and 
+tested on Tesla P100-PCIE-16GB (5300 s runtime)
 
 Slurm fast run: 
 (1) launch interactive session 
@@ -38,3 +38,4 @@ b(2)  -130.4334   -124.1164    -101.2598
 b(3)  0.8120      -0.0642      -0.1119
 b(4)  0.7014      0.3524       0.4840
 b(5)  2.4949      2.2571       5.9188
+
