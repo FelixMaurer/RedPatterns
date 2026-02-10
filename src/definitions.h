@@ -11,8 +11,16 @@
 // degenerate diffusion flux
 #define mDeg 500
 #define jDegDiffPhi0(i) (pow(1.0-phi[i],mDeg))
-#define jDegDiffPsi0(gi,i) (pow(1.0-psi[i],mDeg)*abs(phi[gi]))
-#define jDegDiffPsi1(gi,i) (-pow(psi[i],mDeg))*abs(phi[gi])
+/*
+ * NOTE: The degenerate diffusion terms for psi are now computed using
+ * precomputed power factors (psiPow0 and psiPow1) inside the iteration
+ * kernel. The original macros jDegDiffPsi0 and jDegDiffPsi1 have been
+ * removed to avoid inadvertently using expensive pow() operations on the
+ * device within the iteration loop. See CuKernelIter implementation for
+ * details.
+ */
+/* #define jDegDiffPsi0(gi,i) (pow(1.0-psi[i],mDeg)*abs(phi[gi])) */
+/* #define jDegDiffPsi1(gi,i) ((-pow(psi[i],mDeg))*abs(phi[gi])) */
 // initial RBC density function
 #define Rsigma 4.0f // [g/l] gaussian width
 #define Rmu 1100.0f // [g/l] central RBC density   

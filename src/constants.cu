@@ -22,6 +22,9 @@ double h_delta = 1e-15; // degenerate diffusion restriction psi 0
 double h_kappa = 1e-15; // degenerate diffusion restriction psi 1
 // interaction convolution kernel
 double intKernel[kernelN]; // kernel array
+// constant memory for convolution kernel coefficients
+// The coefficients are copied from intKernel to this array once in runSim().
+__constant__ double c_convKernel[kernelN];
 // cuda device constants
 __constant__ double c_IZ; // cuda space increment
 __constant__ double c_IT; // cuda time increment

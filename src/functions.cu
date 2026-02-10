@@ -232,6 +232,9 @@ void runSim(){
     printf("write intkernel.\n");
     checkCuda( cudaMemcpy(d_intKernel, intKernel, bytes, cudaMemcpyHostToDevice) );  
 
+    // also copy convolution kernel coefficients into constant memory for the optimized convolution kernel
+    checkCuda( cudaMemcpyToSymbol(c_convKernel, intKernel, bytes, 0, cudaMemcpyHostToDevice) );
+
     /* interaction integral */
     double* psi = new double[N]; // for gathering data from device
     double* I = new double[N]; // for gathering data from device
@@ -301,14 +304,30 @@ void runSim(){
     // (2) write initial values
     checkCuda( cudaMemcpy(d_gradWing, gradWing, bytes, cudaMemcpyHostToDevice) );
     
-    // arrays for interpolation computation
-    bytes = (M-1)*sizeof(double);
+    // arrays for interpolation computation (size N, not M)
+    bytes = N * sizeof(double);
     double * d_alp;
     checkCuda( cudaMalloc((void**)&d_alp, bytes) );
     checkCuda( cudaMemset(d_alp, 0, bytes) );
-    
-    // output interpolation
-    double psiIntp[int(M)];
+
+    // spline coefficient arrays (b, c, d) for cubic interpolation
+    double *d_b, *d_c, *d_d;
+    checkCuda( cudaMalloc((void**)&d_b, bytes) );
+    checkCuda( cudaMalloc((void**)&d_c, bytes) );
+    checkCuda( cudaMalloc((void**)&d_d, bytes) );
+    checkCuda( cudaMemset(d_b, 0, bytes) );
+    checkCuda( cudaMemset(d_c, 0, bytes) );
+    checkCuda( cudaMemset(d_d, 0, bytes) );
+
+    // arrays for precomputed degenerate diffusion powers
+    double *d_psiPow0, *d_psiPow1;
+    checkCuda( cudaMalloc((void**)&d_psiPow0, N * sizeof(double)) );
+    checkCuda( cudaMalloc((void**)&d_psiPow1, N * sizeof(double)) );
+    checkCuda( cudaMemset(d_psiPow0, 0, N * sizeof(double)) );
+    checkCuda( cudaMemset(d_psiPow1, 0, N * sizeof(double)) );
+
+    // output interpolation (host buffer for saving psi interpolation if needed)
+    // double psiIntp[int(M)]; only use if output is wanted and uncomment below as well
     
     printf("starting timer.\n");
     // start time measurement
@@ -317,56 +336,53 @@ void runSim(){
     checkCuda( cudaEventCreate(&startEvent) );
     checkCuda( cudaEventCreate(&stopEvent) );
     printf("defining grid and starting loop.\n");
-    // Kernel invocation
-    int nBlocksX, nBlocksY, nThreadsX, nThreadsY;
-    // grid layout, usually max threads in X dimension (1024)
- 
-    nThreadsX = N;
-    nThreadsY = 1;
-    nBlocksX = 1;
-    nBlocksY = N;
+    // Define launch configurations for the optimized kernels
+    dim3 blockN(256, 1);
+    dim3 gridN((N + blockN.x - 1) / blockN.x, 1);
+    dim3 block2D(256, 1);
+    dim3 grid2D((N + block2D.x - 1) / block2D.x, N);
+    dim3 blockM(256, 1);
+    dim3 gridM((M + blockM.x - 1) / blockM.x, 1);
 
-    dim3 numBlocks(nBlocksX,nBlocksY);
-    dim3 threadsPerBlock(nThreadsX,nThreadsY);
-
-    dim3 numBlocksA(subDiv,1);
-    dim3 threadsPerBlockA(N,1);
-
-    dim3 numBlocksD(1,1);
-    dim3 threadsPerBlockD(N,1);
-
-    printf("N = %d, M = %d\n",N,M);
-    printf("alpha = %.32e\nbeta = %.32e\n",h_alpha,h_beta);
-    printf("gamma = %.32e\ndelta = %.32e\nkappa = %.32e\n",h_gamma,h_delta,h_kappa);
-    printf("system size L = %.32e m\n",sysL);
-    printf("increment size dz = %.32e m\n",IZ);
-    printf("launching with\n nBlocksX\t| nThreadsX\t| nBlocksY\t| nThreadsY\n %d\t\t| %d\t\t| %d\t\t| %d\n",nBlocksX,nThreadsX,nBlocksY,nThreadsY);
+    printf("N = %d, M = %d\n", N, M);
+    printf("alpha = %.32e\nbeta = %.32e\n", h_alpha, h_beta);
+    printf("gamma = %.32e\ndelta = %.32e\nkappa = %.32e\n", h_gamma, h_delta, h_kappa);
+    printf("system size L = %.32e m\n", sysL);
+    printf("increment size dz = %.32e m\n", IZ);
+    printf("launch configurations:\n");
+    printf("  gridN  = (%u,%u), blockN  = (%u,%u)\n", gridN.x, gridN.y, blockN.x, blockN.y);
+    printf("  grid2D = (%u,%u), block2D = (%u,%u)\n", grid2D.x, grid2D.y, block2D.x, block2D.y);
+    printf("  gridM  = (%u,%u), blockM  = (%u,%u)\n", gridM.x, gridM.y, blockM.x, blockM.y);
     checkCuda( cudaEventRecord(startEvent, 0) );
     // iteration loop
     int n_out = NO;
     double t = 0.0;
     for (int i = 0; i < NT; i++){
         /* integration */
-        CuKernelInte <<< numBlocks, threadsPerBlock >>> (d_phi,d_psi);
+        CuKernelInte  <<< gridN,  blockN >>> (d_phi, d_psi);
         /* interpolation */
-        CuKernelCmpA <<< numBlocksA, threadsPerBlockA >>> (d_psi, d_alp);
-        CuKernelCmpL <<< numBlocksA, threadsPerBlockA >>> (d_psi, d_alp, d_psiIntp);
-        CuKernelConv <<< numBlocksA, threadsPerBlockA >>> (d_psiIntp,d_IIntp,d_intKernel);
-        CuKernelDSmp <<< numBlocksD, threadsPerBlockD >>> (d_IIntp, d_I);
+        CuKernelCmpA  <<< gridN,  blockN >>> (d_psi, d_alp);
+        // compute spline coefficients once per time step
+        CuKernelSplineCoeffs<<<1,1>>>(d_psi, d_alp, d_b, d_c, d_d);
+        // evaluate spline on the fine grid
+        CuKernelSplineEval <<< gridM, blockM >>> (d_psi, d_b, d_c, d_d, d_psiIntp);
+        // convolution using shared memory tiling; third argument sets the dynamic shared memory size
+        CuKernelConv <<< gridM, blockM, (blockM.x + kernelN - 1) * sizeof(double) >>> (d_psiIntp, d_IIntp, d_intKernel);
+        // downsampling from fine grid back to coarse grid
+        CuKernelDSmp <<< gridN, blockN >>> (d_IIntp, d_I);
+        // precompute degenerate diffusion power factors
+        CuKernelDegDiffPow <<< gridN, blockN >>> (d_psi, d_psiPow0, d_psiPow1);
         /* density gradient */
-        CuKernelGrad <<< numBlocks, threadsPerBlock >>> (d_percoll, t);
-        CuKernelWing <<< numBlocks, threadsPerBlock >>> (d_percoll, d_gradWing, t);
+        CuKernelGrad <<< gridN, blockN >>> (d_percoll, t);
+        CuKernelWing <<< gridN, blockN >>> (d_percoll, d_gradWing, t);
         /* iteration */
-        CuKernelIter <<< numBlocks, threadsPerBlock >>> (d_phi, d_J, d_dJ, d_percoll, d_R, d_I,d_psi,d_intKernel,t,d_gradWing);
+        CuKernelIter <<< grid2D, block2D >>> (d_phi, d_J, d_dJ, d_percoll, d_R, d_I, d_psi, d_psiPow0, d_psiPow1, t, d_gradWing);
         if( (((i-1) % n_out) == 0) | (i == 1) | (i==NT)){
             // retrieve data from GPU mem
+            // copy only the arrays that are written to disk (phi, psi, gradient wing and percoll)
             bytes = N*N*sizeof(double);
             checkCuda( cudaMemcpy(phi, d_phi, bytes, cudaMemcpyDeviceToHost) );
-            checkCuda( cudaMemcpy(J, d_J, bytes, cudaMemcpyDeviceToHost) );
-            checkCuda( cudaMemcpy(dJ, d_dJ, bytes, cudaMemcpyDeviceToHost) );
-            checkCuda( cudaMemcpy(I, d_I, N*sizeof(double), cudaMemcpyDeviceToHost) );
             checkCuda( cudaMemcpy(psi, d_psi, N*sizeof(double), cudaMemcpyDeviceToHost) );
-            checkCuda( cudaMemcpy(psiIntp, d_psiIntp, N*sizeof(double)*subDiv, cudaMemcpyDeviceToHost) );
             checkCuda( cudaMemcpy(gradWing, d_gradWing, N*sizeof(double), cudaMemcpyDeviceToHost) );
             checkCuda( cudaMemcpy(percoll, d_percoll, N*sizeof(double), cudaMemcpyDeviceToHost) );
             //checkCuda( cudaMemcpy(IIntp, d_IIntp, N*sizeof(double)*subDiv, cudaMemcpyDeviceToHost) );
@@ -433,6 +449,13 @@ void runSim(){
     checkCuda( cudaFree(d_IIntp ) );
     checkCuda( cudaFree(d_alp ) );
     checkCuda( cudaFree(d_gradWing ) );
+
+    // free additional arrays allocated for spline coefficients and degenerate diffusion
+    checkCuda( cudaFree(d_b) );
+    checkCuda( cudaFree(d_c) );
+    checkCuda( cudaFree(d_d) );
+    checkCuda( cudaFree(d_psiPow0) );
+    checkCuda( cudaFree(d_psiPow1) );
 
     delete [] phi;
     delete [] dJ;
