@@ -1,15 +1,38 @@
 universe                = docker
 docker_image            = tensorflow/tensorflow:latest-gpu
-executable              = tf_matmul_docker.py
-output                  = tf_matmul.$(ClusterId).$(ProcId).out
-error                   = tf_matmul.$(ClusterId).$(ProcId).err
-log                     = tf_matmul.$(ClusterId).log
+
+# Point directly to your compiled executable
+executable              = red_patterns
+
+# Pass the arguments, replacing the step size with an HTCondor variable $(step_size)
+arguments               = 111.15e-18 0.02 $(step_size) 1200.0 3000 0 0 0
+
+# Include the step size in the output names so you know which file belongs to which parameter!
+output                  = red_patterns.$(ClusterId).$(ProcId)_step_$(step_size).out
+error                   = red_patterns.$(ClusterId).$(ProcId)_step_$(step_size).err
+log                     = red_patterns.$(ClusterId).log
+
 should_transfer_files   = YES
-when_to_transfer_output = ON_EXIT
-request_GPUs = 1
-request_CPUs = 1
-request_memory = 1G
-requirements = UidDomain == "cs.uni-saarland.de" 
-getenv = HOME
-+WantGPUHomeMounted = true
-queue 10
+# Depending on your cluster setup, you may need this to ensure the binary is copied into the container
+transfer_executable     = YES 
+
+request_GPUs            = 1
+request_CPUs            = 1
+request_memory          = 6G
+
+requirements            = UidDomain == "cs.uni-saarland.de" 
++WantGPUHomeMounted     = true
++WantScratchMounted     = true
+
+# --- QUEUE OPTIONS ---
+
+# Option 1: Define the list directly in the submit file (best for small lists)
+queue step_size in (
+    1.00000000e-04
+    5.00000000e-05
+    1.00000000e-05
+)
+
+# Option 2: Read from a separate text file (best for large lists)
+# To use this, comment out Option 1 and uncomment the line below.
+# queue step_size from parameters.txt
