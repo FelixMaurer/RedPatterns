@@ -1,4 +1,4 @@
-/* Linear Percoll gradient kernel */
+/* linear percoll gradient kernel */
 #define PL 8.0
 __global__ void CuKernelGrad(double* percoll, double t)
 {

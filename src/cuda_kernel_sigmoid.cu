@@ -5,7 +5,7 @@
 #define b5 1.1012e-3
 #define b6 0.6
 #define b7 1.5205
-/* Sigmoidal Percoll gradient kernel */
+/* sigmoidal percoll gradient kernel */
 __global__ void CuKernelGrad(double* percoll, double t)
 {
     // get indices

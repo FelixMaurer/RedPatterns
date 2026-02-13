@@ -1,464 +1,298 @@
-/* saving 2D arrays to disk */
-void saveArrToDrive(double* f, char* outFileName)
-{
+namespace fs = std::filesystem;
+
+void printHeader(int n_grid, int m_grid, int nt_steps, double dz_val, double dt_val, double psi_val, double isf_val) {
+    std::cout << "\n============================================================\n";
+    std::cout << "   cuda simulation: conservative finite volume transport    \n";
+    std::cout << "============================================================\n";
+    std::cout << "  grid size (n)   : " << n_grid << "\n";
+    std::cout << "  subgrid (m)     : " << m_grid << "\n";
+    std::cout << "  time steps (nt) : " << nt_steps << "\n";
+    std::cout << "  dz (space step) : " << dz_val << "\n";
+    std::cout << "  dt (time step)  : " << dt_val << "\n";
+    std::cout << "  density (psi)   : " << psi_val << "\n";
+    std::cout << "  scale factor (isf): " << isf_val << "\n";
+    std::cout << "------------------------------------------------------------\n";
+}
+
+void printProgressBar(int step, int total, double elapsed_sec) {
+    const int barWidth = 40;
+    float progress = (float)step / total;
+    
+    std::cout << "\r[";
+    int pos = barWidth * progress;
+    for (int i = 0; i < barWidth; ++i) {
+        if (i < pos) std::cout << "=";
+        else if (i == pos) std::cout << ">";
+        else std::cout << " ";
+    }
+    std::cout << "] " << int(progress * 100.0) << " % ";
+    
+    if (step > 0) {
+        double eta_sec = (elapsed_sec / step) * (total - step);
+        int h = (int)(eta_sec / 3600);
+        int m = (int)((eta_sec - h*3600) / 60);
+        int s = (int)eta_sec % 60;
+        std::cout << "| eta: " 
+                  << std::setfill('0') << std::setw(2) << h << ":"
+                  << std::setfill('0') << std::setw(2) << m << ":"
+                  << std::setfill('0') << std::setw(2) << s;
+    }
+    std::cout << std::flush;
+}
+
+std::string createSimulationDirectory() {
+    auto now = std::chrono::system_clock::now();
+    auto in_time_t = std::chrono::system_clock::to_time_t(now);
+    std::stringstream ss;
+    ss << "sim_" << std::put_time(std::localtime(&in_time_t), "%Y%m%d_%H%M%S");
+    std::string dirName = ss.str();
+    if (!fs::exists(dirName)) fs::create_directory(dirName);
+    return dirName + "/";
+}
+
+void saveNVecToDrive(const double* f, std::string dir, std::string fileName, int n) {
+    std::string fullPath = dir + fileName;
+    std::ofstream ofs(fullPath);
+    ofs.imbue(std::locale::classic());
+    ofs << std::scientific << std::setprecision(std::numeric_limits<double>::max_digits10);
+    for(int i=0; i<n; i++){
+        if(i>0) ofs << "\t";
+        ofs << f[i]; 
+    }
+    ofs << "\n";
+    ofs.close();
+}
+
+bool loadNVecFromDrive(double* f, const char* inFileName, int n) {
+    std::ifstream ifs(inFileName);
+    if(!ifs.is_open()){
+        fprintf(stderr, "\nerror: could not open kernel file '%s'\n", inFileName);
+        return false;
+    }
+    ifs.imbue(std::locale::classic());
+    int count = 0;
+    double v;
+    while(count < n && (ifs >> v)) f[count++] = v;
+    if(count < n){
+        fprintf(stderr, "\nerror: kernel file '%s' has only %d values (need %d)\n", inFileName, count, n);
+        return false;
+    }
+    return true;
+}
+
+void saveArrToDrive(double* f, std::string dir, std::string fileName) {
     const uint16_t sampleSkip = ceil(double(N)/256.0f);
-    std::ofstream ofs(outFileName);
-    for(int i=0;i<N;i+=sampleSkip){
-        for(int j=0;j<N;j+=sampleSkip){
-            if(j>0)
-                ofs << "\t";
+    std::string fullPath = dir + fileName;
+    std::ofstream ofs(fullPath);
+    for(int i=0; i<N; i+=sampleSkip){
+        for(int j=0; j<N; j+=sampleSkip){
+            if(j>0) ofs << "\t";
             ofs << f[i+N*j]; 
         }
         ofs << "\n";
     }
     ofs.close();
 }
-/* saving interpolation to disk */
-void saveIntVecToDrive(double* f, char* outFileName)
-{
-    const uint16_t sampleSkip = 1;
-    std::ofstream ofs(outFileName);
-    for(int i=0;i<M;i+=sampleSkip){
-        if(i>0)
-            ofs << "\t";
-        ofs << f[i]; 
-    }
-    ofs << "\n";
-    ofs.close();
-}
-/* saving vector to disk */
-void saveVecToDrive(double* f, char* outFileName)
-{
+
+void saveVecToDrive(double* f, std::string dir, std::string fileName) {
     const uint16_t sampleSkip = ceil(double(N)/256.0f);
-    std::ofstream ofs(outFileName);
-    for(int i=0;i<N;i+=sampleSkip){
-        if(i>0)
-            ofs << "\t";
+    std::string fullPath = dir + fileName;
+    std::ofstream ofs(fullPath);
+    for(int i=0; i<N; i+=sampleSkip){
+        if(i>0) ofs << "\t";
         ofs << f[i]; 
     }
     ofs << "\n";
     ofs.close();
 }
-/* saving n-vector to disk */
-void saveNVecToDrive(double* f, char* outFileName, int n)
-{
-    std::ofstream ofs(outFileName);
-    for(int i=0;i<n;i+=1){
-        if(i>0)
-            ofs << "\t";
-        ofs << f[i]; 
-    }
-    ofs << "\n";
-    ofs.close();
-}
-/* kernel function */
-#define fLJ(r,sigma) (4*U*(12*pow(sigma,12)/pow(r,13)-6*pow(sigma,6)/pow(r,7)))
-#define g(r,d,sigmaC) (4e7*exp(-pow(r-d,2)/(2*pow(sigmaC,2))))
-void genConvKernel(){
-    // compute effective potential 
-    double kernelL = (double(kernelN)-1)*IZ/subDiv;
-    double kernelDZ = kernelL/double(kernelN-1);
-    double subRes = 10000;
-    double fineRes = subRes*(double(kernelN+1)/2);
-    double force;
-    double fineR;
-    double gpdf;
-    double kernelFine[int(fineRes)];
-    double fineDR = kernelDZ/subRes; // only take positive values
-    double sigma = 5.6e-6;
-    double sigmaC = 0.5e-6;
-    double eqDist = 6.58546720106423709125472581993321341542468871921300888061523437500000000000000000e-06;
-    // use central interval positions
-    double sum = 0;
-    kernelFine[0] = 0; // avoid divergence of force term at zero
-    for(int i=1;i<fineRes;i++){
-        fineR = double(i*fineDR);
-        force = fLJ(fineR,sigma);
-        gpdf = g(fineR,eqDist,sigmaC);
-        if(fineR<1e-8) // make up for numerical error near divergence
-            gpdf = 0.0;
-        kernelFine[i] = sum; // compute integral
-        sum = sum + fineDR*force*gpdf;
-    }
-    
-    // integration constant
-    for(int i=0;i<fineRes;i++)
-        kernelFine[i] = kernelFine[int(fineRes)-1]-kernelFine[i];
-    // sampling of kernel
-    intKernel[(kernelN+1)/2] = 0;
-    double kernelZ;
-    for(int i=(kernelN+1)/2;i<kernelN;i++){
-        kernelZ = double(i*kernelDZ)-kernelL/2;
-        intKernel[i] = kernelZ*kernelFine[int((i+1-double(kernelN+1)/2)*subRes)];
-        intKernel[kernelN-1-i] = -intKernel[i];    
-    }
-    printf("kernel length = %.32e m\n",kernelL);
-}
-/* check cuda device */
-inline
-cudaError_t checkCuda(cudaError_t result)
-{
-    #if defined(DEBUG) || defined(_DEBUG)
-        if (result != cudaSuccess) {
-            fprintf(stderr, "CUDA Runtime Error: %s\n", cudaGetErrorString(result));
-            assert(result == cudaSuccess);
-        }
-    #endif
+
+inline cudaError_t checkCuda(cudaError_t result) {
+    if (result != cudaSuccess) fprintf(stderr, "\ncuda runtime error: %s\n", cudaGetErrorString(result));
     return result;
 }
-/* initial values for phi */
-void initPhi(double *f, double *R)
-{
+
+void initPhi(double *f, double *R) {
     double edgeZ = wingL+2;
     double edgeR = wingL;
     for(int i=0;i<N;i++)
         for(int j=0;j<N;j++){
             f[i+N*j] = exp(-pow(R[j]-(Rmu),2)/(2.0*pow(Rsigma,2)));
-            if((i<edgeZ)|(i>(N-1-edgeZ)))
-                f[i+N*j] = 0.0;
-            if((j<edgeR)|(j>(N-1-edgeR)))
-                f[i+N*j] = 0.0;
+            if((i<edgeZ)|(i>(N-1-edgeZ))|(j<edgeR)|(j>(N-1-edgeR))) f[i+N*j] = 0.0;
         }
-    // normalization
-    /*
-    integral phi dz drho = intgral psi dz = L N <psi> = L N PSI
-    sum phi IZ = N <psi> = N PSI
-    */
     double phiSum = 0.0;
-    for(int i=0;i<N;i++)
-        for(int j=0;j<N;j++)
-            phiSum += f[i+N*j];
-    for(int i=0;i<N;i++)
-        for(int j=0;j<N;j++)
-            f[i+N*j] = f[i+N*j]/phiSum*PSI*(N-2*edgeZ);
+    for(int i=0;i<N;i++) for(int j=0;j<N;j++) phiSum += f[i+N*j];
+    for(int i=0;i<N;i++) for(int j=0;j<N;j++) f[i+N*j] = f[i+N*j]/phiSum*PSI*(N-2*edgeZ);
 }
-/* taking arguments */
+
 void readParameters(int argc, char *argv[]){
     int argIdx = 1;
-    // U
-    if(argc>argIdx)
-        U = std::stod(argv[argIdx]);
-    argIdx++;
-    // PSI
-    if(argc>argIdx)
-        PSI = std::stod(argv[argIdx]);
-    argIdx++;
-    // IT
-    if(argc>argIdx)
-        IT = std::stod(argv[argIdx]);
-    argIdx++;
-    // T
-    if(argc>argIdx)
-        T = std::stod(argv[argIdx]);
-    argIdx++;
-    // NO
-    if(argc>argIdx)
-        NO = std::stod(argv[argIdx]);
-    argIdx++;
-    // gamma
-    if(argc>argIdx)
-        h_gamma = std::stod(argv[argIdx]);
-    argIdx++;
-    // delta
-    if(argc>argIdx)
-        h_delta = std::stod(argv[argIdx]);
-    argIdx++;
-    // kappa
-    if(argc>argIdx)
-        h_kappa = std::stod(argv[argIdx]);
-    argIdx++;
-    // re-evalutate parameters
+    if(argc>argIdx) ISF = std::stod(argv[argIdx]); argIdx++;
+    if(argc>argIdx) PSI = std::stod(argv[argIdx]); argIdx++;
+    if(argc>argIdx) IT = std::stod(argv[argIdx]); argIdx++;
+    if(argc>argIdx) T = std::stod(argv[argIdx]); argIdx++;
+    if(argc>argIdx) NO = std::stod(argv[argIdx]); argIdx++;
     NT = ceil(T/IT);
 }
-/* running simulation */
+
 void runSim(){
-    // allocate space for output filename
-    char outFileName[19];
-    // constants to device memory
-    checkCuda( cudaMemcpyToSymbol(c_IZ, &IZ, sizeof(double), 0, cudaMemcpyHostToDevice) );
-    checkCuda( cudaMemcpyToSymbol(c_IT, &IT, sizeof(double), 0, cudaMemcpyHostToDevice) );
-    checkCuda( cudaMemcpyToSymbol(c_PSI, &PSI, sizeof(double), 0, cudaMemcpyHostToDevice) );
-    checkCuda( cudaMemcpyToSymbol(c_beta, &h_beta, sizeof(double), 0, cudaMemcpyHostToDevice) );
-    checkCuda( cudaMemcpyToSymbol(c_alpha, &h_alpha, sizeof(double), 0, cudaMemcpyHostToDevice) );
-    checkCuda( cudaMemcpyToSymbol(c_gamma, &h_gamma, sizeof(double), 0, cudaMemcpyHostToDevice) );
-    checkCuda( cudaMemcpyToSymbol(c_delta, &h_delta, sizeof(double), 0, cudaMemcpyHostToDevice) );
-    checkCuda( cudaMemcpyToSymbol(c_kappa, &h_kappa, sizeof(double), 0, cudaMemcpyHostToDevice) );
-    // coordinates
-    printf("writing coordinate arrays to GPU mem.\n");
-    double *R = new double[N]; // density dimension vector
-    for(int j=0;j<N;j++)
-        R[j] = RC-RL/2+RL*(double(j)/double(N-1));
-    int bytes = 0; // size of array or vector
-    // R device array
-    bytes = N*sizeof(double);
-    double* d_R; // R on device
-    // (1) allocate
-    checkCuda( cudaMalloc((void**)&d_R, bytes) );
-    // (2) write initial values
-    checkCuda( cudaMemcpy(d_R, R, bytes, cudaMemcpyHostToDevice) );  
-    // arrays of volumetric density and flux
-    printf("writing flux and density arrays to GPU mem.\n");
+    std::string outDir = createSimulationDirectory();
+    
+    int M_val = M;
+
+    printHeader(N, M_val, NT, IZ, IT, PSI, ISF);
+    
+    std::cout << "  output dir      : " << outDir << "\n";
+    std::cout << "============================================================\n\n";
+
+    checkCuda( cudaMemcpyToSymbol(c_IZ, &IZ, sizeof(double)) );
+    checkCuda( cudaMemcpyToSymbol(c_IT, &IT, sizeof(double)) );
+    checkCuda( cudaMemcpyToSymbol(c_PSI, &PSI, sizeof(double)) );
+    checkCuda( cudaMemcpyToSymbol(c_beta, &h_beta, sizeof(double)) );
+    checkCuda( cudaMemcpyToSymbol(c_alpha, &h_alpha, sizeof(double)) );
+
+    double *R = new double[N];
+    for(int j=0;j<N;j++) R[j] = RC-RL/2+RL*(double(j)/double(N-1));
+    
     double *phi = new double[N*N];
-    double *dJ = new double[N*N];
-    double *J = new double[N*N];
-    // write initial values (calculated from R)
+    double *J = new double[N*N]; 
+    double *I = new double[N]; 
+    for(int i=0; i<N; i++) I[i] = 0.0;
+
     initPhi(phi,R);
-    /* write initial condition to drive
-    sprintf(outFileName,"initPhi.dat");
-    saveArrToDrive(phi,outFileName);*/
-    // device arrays
-    bytes = N*N*sizeof(double);
-    double *d_phi, *d_dJ, *d_J;
-    // (1) allocate
-    checkCuda( cudaMalloc((void**)&d_phi, bytes) );
-    checkCuda( cudaMalloc((void**)&d_dJ, bytes) );
-    checkCuda( cudaMalloc((void**)&d_J, bytes) );
-    // (2) write initial values
-    checkCuda( cudaMemcpy(d_phi, phi, bytes, cudaMemcpyHostToDevice) );  
-    checkCuda( cudaMemset(d_dJ, 0, bytes) );
-    checkCuda( cudaMemset(d_J, 0, bytes) );
-    printf("writing vectors to GPU mem.\n");
 
-    /* interaction kernel */
-    genConvKernel();
-    sprintf(outFileName,"intKernel.dat");
-    saveNVecToDrive(intKernel,outFileName,kernelN);
-    bytes = kernelN*sizeof(double);
+    double *d_R, *d_phi, *d_J;
+    checkCuda( cudaMalloc((void**)&d_R, N*sizeof(double)) );
+    checkCuda( cudaMalloc((void**)&d_phi, N*N*sizeof(double)) );
+    checkCuda( cudaMalloc((void**)&d_J, N*N*sizeof(double)) );
+
+    checkCuda( cudaMemcpy(d_R, R, N*sizeof(double), cudaMemcpyHostToDevice) );
+    checkCuda( cudaMemcpy(d_phi, phi, N*N*sizeof(double), cudaMemcpyHostToDevice) );
+    checkCuda( cudaMemset(d_J, 0, N*N*sizeof(double)) );
+
+    const char* kernelInFile = "kernelInput.dat";
+    std::cout << "  -> loading kernel... ";
+    if(!loadNVecFromDrive(intKernel, kernelInFile, kernelN)){
+        fprintf(stderr, "fatal error\n");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Scale kernel by ISF
+    for(int i=0; i<kernelN; i++) {
+        intKernel[i] *= ISF;
+    }
+    
+    std::cout << "done.\n";
+    saveNVecToDrive(intKernel, outDir, "intKernel.dat", kernelN);
+
     double *d_intKernel;
-    // (1) allocate
-    printf("allocate intkernel.\n");
-    checkCuda( cudaMalloc((void**)&d_intKernel, bytes) );
-    // (2) write initial values
-    printf("write intkernel.\n");
-    checkCuda( cudaMemcpy(d_intKernel, intKernel, bytes, cudaMemcpyHostToDevice) );  
+    checkCuda( cudaMalloc((void**)&d_intKernel, kernelN*sizeof(double)) );
+    checkCuda( cudaMemcpy(d_intKernel, intKernel, kernelN*sizeof(double), cudaMemcpyHostToDevice) );  
+    checkCuda( cudaMemcpyToSymbol(c_convKernel, intKernel, kernelN*sizeof(double)) );
 
-    // also copy convolution kernel coefficients into constant memory for the optimized convolution kernel
-    checkCuda( cudaMemcpyToSymbol(c_convKernel, intKernel, bytes, 0, cudaMemcpyHostToDevice) );
+    double *d_I, *d_psi, *d_percoll, *d_gradWing, *d_alp, *d_b, *d_c, *d_d;
+    double *d_psiIntp, *d_IIntp;
 
-    /* interaction integral */
-    double* psi = new double[N]; // for gathering data from device
-    double* I = new double[N]; // for gathering data from device
-    bytes = N*sizeof(double);
-    double *d_I;
-    // (1) allocate
-    printf("allocate integral.\n");
-    checkCuda( cudaMalloc((void**)&d_I, bytes) );
-    // (2) write initial values
-    printf("write integral.\n");
-    checkCuda( cudaMemset(d_I, 0, bytes) );
-
-    /* psi - volume fraction */
-    printf("allocate psi.\n");
-    bytes = N*sizeof(double);
-    double *d_psi;
-    // (1) allocate
-    checkCuda( cudaMalloc((void**)&d_psi, bytes) );
-    printf("write psi.\n");
-    // (2) write initial values
-    checkCuda( cudaMemset(d_psi, 0, bytes) );
-
-    /* interpolated psi */
-    printf("allocate interpolated psi.\n");
-    bytes = sizeof(double)*M;
-    double *d_psiIntp;
-    // (1) allocate
-    checkCuda( cudaMalloc((void**)&d_psiIntp, bytes) );
-    printf("write psi.\n");
-    // (2) write initial values
-    checkCuda( cudaMemset(d_psiIntp, 0, bytes) );
-
-    /* interpolated I integral */
-    printf("allocate interpolated I.\n");
-    bytes = sizeof(double)*M;
-    double *d_IIntp;
-    // (1) allocate
-    checkCuda( cudaMalloc((void**)&d_IIntp, bytes) );
-    printf("write psi.\n");
-    // (2) write initial values
-    checkCuda( cudaMemset(d_IIntp, 0, bytes) );
-
-    /* percoll - gradient */
-    printf("allocate percoll.\n");
-    double *percoll = new double[N];
-    for(int k=0; k<N; k++)
-        percoll[k] = 0.0;
-
-    // percoll device array
-    bytes = N*sizeof(double);
-    double* d_percoll; // R on device
-    // (1) allocate
-    checkCuda( cudaMalloc((void**)&d_percoll, bytes) );
-    // (2) write initial values
-    checkCuda( cudaMemcpy(d_percoll, percoll, bytes, cudaMemcpyHostToDevice) );
+    checkCuda( cudaMalloc((void**)&d_I, N*sizeof(double)) );
+    checkCuda( cudaMalloc((void**)&d_psi, N*sizeof(double)) );
+    checkCuda( cudaMalloc((void**)&d_percoll, N*sizeof(double)) );
+    checkCuda( cudaMalloc((void**)&d_gradWing, N*sizeof(double)) );
+    checkCuda( cudaMalloc((void**)&d_alp, N*sizeof(double)) );
+    checkCuda( cudaMalloc((void**)&d_b, N*sizeof(double)) );
+    checkCuda( cudaMalloc((void**)&d_c, N*sizeof(double)) );
+    checkCuda( cudaMalloc((void**)&d_d, N*sizeof(double)) );
     
-    // gradient wing
-    printf("allocate gradient wing.\n");
+    checkCuda( cudaMalloc((void**)&d_psiIntp, M*sizeof(double)) );
+    checkCuda( cudaMalloc((void**)&d_IIntp, M*sizeof(double)) );
+
+    checkCuda( cudaMemset(d_I, 0, N*sizeof(double)) );
+    checkCuda( cudaMemset(d_psi, 0, N*sizeof(double)) );
+    checkCuda( cudaMemset(d_percoll, 0, N*sizeof(double)) );
+    checkCuda( cudaMemset(d_gradWing, 0, N*sizeof(double)) );
+    checkCuda( cudaMemset(d_alp, 0, N*sizeof(double)) );
+    checkCuda( cudaMemset(d_psiIntp, 0, M*sizeof(double)) );
+
     double *gradWing = new double[N];
-    for(int i=0; i<N; i++)
-        gradWing[i] = 0.0;
-    // gradient wing device array
-    bytes = N*sizeof(double);
-    double* d_gradWing; // R on device
-    // (1) allocate
-    checkCuda( cudaMalloc((void**)&d_gradWing, bytes) );
-    // (2) write initial values
-    checkCuda( cudaMemcpy(d_gradWing, gradWing, bytes, cudaMemcpyHostToDevice) );
+    for(int i=0; i<N; i++) gradWing[i] = 0.0;
+    checkCuda( cudaMemcpy(d_gradWing, gradWing, N*sizeof(double), cudaMemcpyHostToDevice) );
     
-    // arrays for interpolation computation (size N, not M)
-    bytes = N * sizeof(double);
-    double * d_alp;
-    checkCuda( cudaMalloc((void**)&d_alp, bytes) );
-    checkCuda( cudaMemset(d_alp, 0, bytes) );
+    double *percoll = new double[N];
+    for(int i=0; i<N; i++) percoll[i] = 0.0;
+    checkCuda( cudaMemcpy(d_percoll, percoll, N*sizeof(double), cudaMemcpyHostToDevice) );
 
-    // spline coefficient arrays (b, c, d) for cubic interpolation
-    double *d_b, *d_c, *d_d;
-    checkCuda( cudaMalloc((void**)&d_b, bytes) );
-    checkCuda( cudaMalloc((void**)&d_c, bytes) );
-    checkCuda( cudaMalloc((void**)&d_d, bytes) );
-    checkCuda( cudaMemset(d_b, 0, bytes) );
-    checkCuda( cudaMemset(d_c, 0, bytes) );
-    checkCuda( cudaMemset(d_d, 0, bytes) );
-
-    // arrays for precomputed degenerate diffusion powers
-    double *d_psiPow0, *d_psiPow1;
-    checkCuda( cudaMalloc((void**)&d_psiPow0, N * sizeof(double)) );
-    checkCuda( cudaMalloc((void**)&d_psiPow1, N * sizeof(double)) );
-    checkCuda( cudaMemset(d_psiPow0, 0, N * sizeof(double)) );
-    checkCuda( cudaMemset(d_psiPow1, 0, N * sizeof(double)) );
-
-    // output interpolation (host buffer for saving psi interpolation if needed)
-    // double psiIntp[int(M)]; only use if output is wanted and uncomment below as well
-    
-    printf("starting timer.\n");
-    // start time measurement
-    float milliseconds;
-    cudaEvent_t startEvent, stopEvent;
-    checkCuda( cudaEventCreate(&startEvent) );
-    checkCuda( cudaEventCreate(&stopEvent) );
-    printf("defining grid and starting loop.\n");
-    // Define launch configurations for the optimized kernels
     dim3 blockN(256, 1);
-    dim3 gridN((N + blockN.x - 1) / blockN.x, 1);
+    dim3 gridN((N + 255) / 256, 1);
     dim3 block2D(256, 1);
-    dim3 grid2D((N + block2D.x - 1) / block2D.x, N);
+    dim3 grid2D((N + 255) / 256, N);
     dim3 blockM(256, 1);
-    dim3 gridM((M + blockM.x - 1) / blockM.x, 1);
+    dim3 gridM((M + 255) / 256, 1);
 
-    printf("N = %d, M = %d\n", N, M);
-    printf("alpha = %.32e\nbeta = %.32e\n", h_alpha, h_beta);
-    printf("gamma = %.32e\ndelta = %.32e\nkappa = %.32e\n", h_gamma, h_delta, h_kappa);
-    printf("system size L = %.32e m\n", sysL);
-    printf("increment size dz = %.32e m\n", IZ);
-    printf("launch configurations:\n");
-    printf("  gridN  = (%u,%u), blockN  = (%u,%u)\n", gridN.x, gridN.y, blockN.x, blockN.y);
-    printf("  grid2D = (%u,%u), block2D = (%u,%u)\n", grid2D.x, grid2D.y, block2D.x, block2D.y);
-    printf("  gridM  = (%u,%u), blockM  = (%u,%u)\n", gridM.x, gridM.y, blockM.x, blockM.y);
-    checkCuda( cudaEventRecord(startEvent, 0) );
-    // iteration loop
+    std::cout << "  -> starting simulation loop...\n\n";
+    auto start_time = std::chrono::high_resolution_clock::now();
     int n_out = NO;
     double t = 0.0;
+
     for (int i = 0; i < NT; i++){
-        /* integration */
         CuKernelInte  <<< gridN,  blockN >>> (d_phi, d_psi);
-        /* interpolation */
         CuKernelCmpA  <<< gridN,  blockN >>> (d_psi, d_alp);
-        // compute spline coefficients once per time step
         CuKernelSplineCoeffs<<<1,1>>>(d_psi, d_alp, d_b, d_c, d_d);
-        // evaluate spline on the fine grid
         CuKernelSplineEval <<< gridM, blockM >>> (d_psi, d_b, d_c, d_d, d_psiIntp);
-        // convolution using shared memory tiling; third argument sets the dynamic shared memory size
         CuKernelConv <<< gridM, blockM, (blockM.x + kernelN - 1) * sizeof(double) >>> (d_psiIntp, d_IIntp, d_intKernel);
-        // downsampling from fine grid back to coarse grid
         CuKernelDSmp <<< gridN, blockN >>> (d_IIntp, d_I);
-        // precompute degenerate diffusion power factors
-        CuKernelDegDiffPow <<< gridN, blockN >>> (d_psi, d_psiPow0, d_psiPow1);
-        /* density gradient */
+        
         CuKernelGrad <<< gridN, blockN >>> (d_percoll, t);
         CuKernelWing <<< gridN, blockN >>> (d_percoll, d_gradWing, t);
-        /* iteration */
-        CuKernelIter <<< grid2D, block2D >>> (d_phi, d_J, d_dJ, d_percoll, d_R, d_I, d_psi, d_psiPow0, d_psiPow1, t, d_gradWing);
-        if( (((i-1) % n_out) == 0) | (i == 1) | (i==NT)){
-            // retrieve data from GPU mem
-            // copy only the arrays that are written to disk (phi, psi, gradient wing and percoll)
-            bytes = N*N*sizeof(double);
-            checkCuda( cudaMemcpy(phi, d_phi, bytes, cudaMemcpyDeviceToHost) );
-            checkCuda( cudaMemcpy(psi, d_psi, N*sizeof(double), cudaMemcpyDeviceToHost) );
+
+        CuKernelComputeFlux <<< grid2D, block2D >>> (d_phi, d_J, d_percoll, d_R, d_I, d_gradWing);
+        CuKernelUpdatePhi   <<< grid2D, block2D >>> (d_phi, d_J);
+
+        if( (((i-1) % n_out) == 0) | (i == 1) | (i==NT) ){
+            auto now = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> elapsed = now - start_time;
+            printProgressBar(i, NT, elapsed.count());
+
+            checkCuda( cudaMemcpy(phi, d_phi, N*N*sizeof(double), cudaMemcpyDeviceToHost) );
+            double* psi_host = new double[N];
+            checkCuda( cudaMemcpy(psi_host, d_psi, N*sizeof(double), cudaMemcpyDeviceToHost) );
             checkCuda( cudaMemcpy(gradWing, d_gradWing, N*sizeof(double), cudaMemcpyDeviceToHost) );
             checkCuda( cudaMemcpy(percoll, d_percoll, N*sizeof(double), cudaMemcpyDeviceToHost) );
-            //checkCuda( cudaMemcpy(IIntp, d_IIntp, N*sizeof(double)*subDiv, cudaMemcpyDeviceToHost) );
-            // write data to file
-            sprintf(outFileName,"phi_%010d.dat",i);
-            saveArrToDrive(phi,outFileName);
 
-            sprintf(outFileName,"psi_%010d.dat",i);
-            saveVecToDrive(psi,outFileName);     
+            std::stringstream ss;
+            ss << "phi_" << std::setfill('0') << std::setw(10) << i << ".dat";
+            saveArrToDrive(phi, outDir, ss.str());
+
+            ss.str(""); ss << "psi_" << std::setfill('0') << std::setw(10) << i << ".dat";
+            saveVecToDrive(psi_host, outDir, ss.str());     
             
-            sprintf(outFileName,"gW_%010d.dat",i);
-            saveVecToDrive(gradWing,outFileName);
+            ss.str(""); ss << "gw_" << std::setfill('0') << std::setw(10) << i << ".dat";
+            saveVecToDrive(gradWing, outDir, ss.str());
 
-            sprintf(outFileName,"gP_%010d.dat",i);
-            saveVecToDrive(percoll,outFileName);
+            ss.str(""); ss << "gp_" << std::setfill('0') << std::setw(10) << i << ".dat";
+            saveVecToDrive(percoll, outDir, ss.str());
 
-            /* optional output
-            sprintf(outFileName,"J_%010d.dat",i);
-            saveArrToDrive(J,outFileName);
-            sprintf(outFileName,"dJ_%010d.dat",i);
-            saveArrToDrive(dJ,outFileName);
-            sprintf(outFileName,"I_%010d.dat",i);
-            saveVecToDrive(I,outFileName);
-            
-
-            sprintf(outFileName,"pit_%010d.dat",i);
-            saveIntVecToDrive(psiIntp,outFileName);
-            */
-           
-            // measure time
-            checkCuda( cudaEventRecord(stopEvent, 0) );
-            checkCuda( cudaEventSynchronize(stopEvent) );
-            checkCuda( cudaEventElapsedTime(&milliseconds, startEvent, stopEvent) );
-            printf("step: %d/%d\n", i, NT);
-            printf("runtime (sec): %.5f\n", milliseconds/1000.0);
-            printf("remaining (sec): %.5f\n", milliseconds/1000.0 * (NT-i)/i);
-       }
-       t += IT;
+            delete[] psi_host;
+        }
+        t += IT;
     }
-    printf("finished.\n\n");
-    // stop timer
-    checkCuda( cudaEventRecord(stopEvent, 0) );
-    checkCuda( cudaEventSynchronize(stopEvent) );
-    checkCuda( cudaEventElapsedTime(&milliseconds, startEvent, stopEvent) );
 
-    // show stats    
-    printf("   total steps: %d\n", NT);
-    printf("   total time (ms): %f\n", milliseconds);
-    printf("   average time (ms): %f\n", milliseconds / NT);
-
-    // delete arrays and free memory
-    checkCuda( cudaEventDestroy(startEvent) );
-    checkCuda( cudaEventDestroy(stopEvent) );
-
+    auto now = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = now - start_time;
+    printProgressBar(NT, NT, elapsed.count());
+    std::cout << "\n\n  -> simulation complete.\n";
+    
     checkCuda( cudaFree(d_phi) );
-    checkCuda( cudaFree(d_dJ) );
     checkCuda( cudaFree(d_J) );
     checkCuda( cudaFree(d_R) );
     checkCuda( cudaFree(d_percoll) );
     checkCuda( cudaFree(d_I) );
     checkCuda( cudaFree(d_intKernel) );
-    checkCuda( cudaFree(d_psi ) );
-    checkCuda( cudaFree(d_psiIntp ) );
-    checkCuda( cudaFree(d_IIntp ) );
-    checkCuda( cudaFree(d_alp ) );
-    checkCuda( cudaFree(d_gradWing ) );
-
-    // free additional arrays allocated for spline coefficients and degenerate diffusion
+    checkCuda( cudaFree(d_psi) );
+    checkCuda( cudaFree(d_psiIntp) );
+    checkCuda( cudaFree(d_IIntp) );
+    checkCuda( cudaFree(d_alp) );
+    checkCuda( cudaFree(d_gradWing) );
     checkCuda( cudaFree(d_b) );
     checkCuda( cudaFree(d_c) );
     checkCuda( cudaFree(d_d) );
-    checkCuda( cudaFree(d_psiPow0) );
-    checkCuda( cudaFree(d_psiPow1) );
 
-    delete [] phi;
-    delete [] dJ;
-    delete [] J;
-    delete [] I;
+    delete [] phi; delete [] J; delete [] I; delete [] percoll; delete [] gradWing; delete [] R;
 }

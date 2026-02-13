@@ -12,6 +12,8 @@
 #define mDeg 500
 #define jDegDiffPhi0(i) (pow(1.0-phi[i],mDeg))
 /*
+ * The degenerate diffusion flux is obsolete and overhauled by intrinsically 
+ * stable flux computations.   
  * NOTE: The degenerate diffusion terms for psi are now computed using
  * precomputed power factors (psiPow0 and psiPow1) inside the iteration
  * kernel. The original macros jDegDiffPsi0 and jDegDiffPsi1 have been

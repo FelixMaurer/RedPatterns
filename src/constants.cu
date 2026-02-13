@@ -3,7 +3,7 @@
 */
 // RBC parameters
 double PSI = 0.02; // [v/v] RBC average volume fraction
-double U = 100e-18; // [J] RBC effective interaction energy
+double ISF = 1.000;
 // time iteration parameters
 double IT = 0.005;   // [s] time increment 
 double T = 1200.0; // [s] total simulation time
@@ -17,6 +17,7 @@ const double IZ = sysL/(N-1); //[m] space increment
 // host flux prefactors
 double h_beta = 7.4e23; // interaction integral
 double h_alpha = 2e-4; // exp -4 for 20000 g, exp -5 for 2000 g
+// stabilization flux (overhauled, use for experimentation)
 double h_gamma = 3e-10; // degenerate diffusion restriction phi 0
 double h_delta = 1e-15; // degenerate diffusion restriction psi 0
 double h_kappa = 1e-15; // degenerate diffusion restriction psi 1
