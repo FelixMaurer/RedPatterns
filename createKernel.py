@@ -10,7 +10,7 @@ N_size  = 256
 M_size  = int(N_size * subDiv + 1)
 sysL    = M_size * 1.041412353515625e-6
 IZ      = sysL / (N_size - 1)
-U       = -100e-18 # Value usually passed via readParameters
+U       = 100e-18 # Value usually passed via readParameters
 
 def fLJ(r, sigma, U_param):
     """Lennard-Jones effective force: #define fLJ in functions.cu"""
@@ -86,4 +86,5 @@ def generate_and_save_kernel():
     print(f"Kernel successfully saved to {out_filename}")
 
 if __name__ == "__main__":
+
     generate_and_save_kernel()
