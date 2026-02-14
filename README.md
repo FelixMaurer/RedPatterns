@@ -196,7 +196,7 @@ Where:
 
 Example:
 
-&nbsp; ./red\_patterns 1.0 0.02 5.0e-4 1200.0 3000
+&nbsp; ./red\_patterns 1.0 0.02 2e-3 1200.0 3000
 
 
 
@@ -417,4 +417,5 @@ Color mapping (psi -> RGB)
 If you use this code, please cite the associated manuscript:
 
 https://www.pnas.org/doi/10.1073/pnas.2515704122
+
 
