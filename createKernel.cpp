@@ -18,7 +18,7 @@
 // CONSTANTS FROM constants.cu
 // =============================================================================
 const double IZ = sysL / (N - 1);
-double U = -100e-18; 
+double U = 100e-18; 
 double intKernel[kernelN];
 
 // =============================================================================
@@ -101,3 +101,4 @@ int main() {
     std::cout << "Kernel successfully saved to intKernel.dat" << std::endl;
     return 0;
 }
+
