@@ -31,11 +31,11 @@ double intKernel[kernelN];
 // KERNEL GENERATION (MIRRORING functions.cu)
 // =============================================================================
 void genConvKernel() {
-    // 1. Setup constants precisely as defined in functions.cu
+    // 1. Setup constants
     double kernelL = (double(kernelN) - 1) * IZ / subDiv;
     double kernelDZ = kernelL / double(kernelN - 1);
     double subRes = 10000;
-    double fineRes = subRes * (double(kernelN + 1) / 2);
+    int fineResSize = (int)(subRes * (double(kernelN + 1) / 2.0));
     
     double fineDR = kernelDZ / subRes;
     double sigma = 5.6e-6;
@@ -43,13 +43,13 @@ void genConvKernel() {
     double eqDist = 6.585467201064237091254725819933213415424688719213008880615234375e-06;
 
     // 2. Integration loop
-    // Note: fineRes is 160,000 for kernelN=31
-    std::vector<double> kernelFine(int(fineRes)); 
+    // FIX: Using braces {} prevents the "Most Vexing Parse"
+    std::vector<double> kernelFine(fineResSize); 
     double sum = 0;
     kernelFine[0] = 0;
 
-    for (int i = 1; i < int(fineRes); i++) {
-        double fineR = double(i * fineDR);
+    for (int i = 1; i < fineResSize; i++) {
+        double fineR = (double)i * fineDR;
         double force = fLJ(fineR, sigma);
         double gpdf = g_func(fineR, eqDist, sigmaC);
         
@@ -60,19 +60,20 @@ void genConvKernel() {
     }
 
     // 3. Integration constant subtraction
-    for (int i = 0; i < int(fineRes); i++) {
-        kernelFine[i] = kernelFine[int(fineRes) - 1] - kernelFine[i];
+    double lastVal = kernelFine[fineResSize - 1];
+    for (int i = 0; i < fineResSize; i++) {
+        kernelFine[i] = lastVal - kernelFine[i];
     }
 
     // 4. Sampling of kernel
     intKernel[(kernelN + 1) / 2] = 0;
     for (int i = (kernelN + 1) / 2; i < kernelN; i++) {
-        double kernelZ = double(i * kernelDZ) - kernelL / 2;
+        double kernelZ = ((double)i * kernelDZ) - (kernelL / 2.0);
         
-        // Use exact index calculation from functions.cu
-        int idx = int((i + 1 - double(kernelN + 1) / 2.0) * subRes);
+        // Exact index calculation mirroring functions.cu
+        int idx = (int)((i + 1 - (double)(kernelN + 1) / 2.0) * subRes);
         
-        if (idx < int(fineRes)) {
+        if (idx < fineResSize) {
             intKernel[i] = kernelZ * kernelFine[idx];
             intKernel[kernelN - 1 - i] = -intKernel[i];
         }
