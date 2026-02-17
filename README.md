@@ -1,421 +1,219 @@
-RedPatterns (CUDA) — Conservative FVM Solver + External Kernel Pipeline
+# Benchmark Code Collection — Conservative Finite-Volume Transport (C++/CUDA, MATLAB, Julia)
 
-2025 Felix Maurer, Experimentalphysik AG Wagner, Universität des Saarlandes
+This repository is a **multi-language benchmark suite** that implements the *same* conservative finite-volume transport simulation
+in several backends (serial CPU, multi-core CPU, GPU) and measures **time-per-step vs grid size**.
 
+It is intended to answer questions like: *“How fast can this specific transport + spline + convolution workload run in C++/OpenMP vs CUDA vs MATLAB vs Julia?”*
 
+---
 
-Manuscript: https://www.pnas.org/doi/10.1073/pnas.2515704122
+## What is being simulated?
 
+All implementations evolve a 2D field `phi(z, r, t)` on an `N × N` grid (discrete axial coordinate `z` and radial coordinate `r`).
 
+Each time step (conceptually) does:
 
+1. **Radial integration** to obtain a 1D profile  
+   `psi(z) = Σ_r phi(z, r)` (discrete sum over the radial index).
 
+2. **Spline interpolation** of `psi` to a refined 1D grid of length  
+   `M = floor(N * (65536/N) + 1)` → **`M ≈ 65537` for all `N`**, by construction.
 
-1\) What this code does
+3. **1D convolution / correlation** of the interpolated profile with a fixed 31-tap kernel (`kernelInput.dat`) to obtain `I(z)`.
 
-----------------------
+4. **Compute axial advection velocity** (per cell) from a static geometry/gradient term plus the interaction signal `I(z)`:
+   `v_z(z,r) = -α * (R(r) + P(z) - P0) - β * I(z)`  
+   (details and region logic in the code; e.g. “wing” vs “center” uses different `P(z)` profiles).
 
-RedPatterns simulates pattern formation / banding dynamics in RBC suspensions on a 2D grid
+5. **Conservative finite-volume update** using:
+   - **Upwind** advection in `z`
+   - optional diffusion in `z` and `r`
+   - **zero-flux boundaries** (sealed box / mass-conserving)
+   - clamp `phi < 0` to `0`
 
-(N x N) using CUDA acceleration. The current version uses a conservative finite-volume
+### Complexity (why this is a good benchmark)
+The dominant work scales like **O(N²)** (building velocities + fluxes + updating `phi`). The spline+convolution part is ~constant-cost per step because `M` is ~constant.
 
-transport update (flux form) with an upwind scheme for stability.
+---
 
+## Repository layout
 
+- `cpp_serial/` — C++ single-thread implementation (pins to core 0, FTZ/DAZ enabled)
+- `cpp_parallel/` — C++ OpenMP implementation
+- `cpp_cuda/` — C++/CUDA implementation (unity build via `benchmark_main.cu`)
+- `matlab_serial/` — MATLAB CPU implementation
+- `matlab_vectorized/` — MATLAB CPU “optimized/vectorized” implementation
+- `matlab_gpu_array/` — MATLAB `gpuArray` implementation (Parallel Computing Toolbox)
+- `julia_cpu_serial/` — Julia CPU serial implementation
+- `julia_cpu_parallel/` — Julia CPU threaded implementation
+- `julia_cuda/` — Julia CUDA implementation (CUDA.jl)
 
-Key upgrades vs older versions:
+Top-level helpers / data:
 
-\- Conservative finite-volume method (FVM): compute interface fluxes, then update cell values.
+- `kernelInput.dat` — **required** kernel file (at least 31 values; the first 31 are used)
+- `*_cpu.txt`, `*_cuda.txt`, … — example benchmark result tables (`N`, `avg_ms`, `std_ms`)
+- `benchmark_plotter.m` — plots the `*.txt` benchmark tables
 
-\- Sealed boundaries (zero flux at both ends) for strict mass conservation.
+---
 
-\- Upwind differencing for advection to eliminate central-difference ringing.
+## Common command-line / function signature
 
-\- Kernel generation moved to Python (createKernel.py) and loaded from disk at runtime.
+Most backends use the same parameter order (first argument required):
 
-\- Each run writes to its own timestamped output folder (no overwrites).
+| Position | Name | Meaning | Typical default |
+|---:|---|---|---|
+| 1 | `N` | grid size (`N × N`) | (required) |
+| 2 | `ISF` | interaction scale factor applied to kernel | `1.0` |
+| 3 | `PSI` | average volume fraction target used for initialization/normalization | `0.02` |
+| 4 | `IT` | time step `dt` | `0.005` (benchmarks often use `0.001`) |
+| 5 | `T` | total simulated time | `1200.0` (benchmarks often scale with `1/N`) |
+| 6 | `NO` | output interval (steps) | `1000` (benchmarks use large values to avoid I/O) |
+| 7 | `D` | diffusion coefficient | `0.0` (benchmarks often use `1e-9`) |
 
+**Kernel file:** all implementations expect `kernelInput.dat` in the **current working directory**.
 
+---
 
+## Outputs
 
+Each run creates a timestamped output directory (naming varies by backend, e.g. `sim_serial_YYYYMMDD_HHMMSS/`).
 
-2\) Repository layout (important files)
+Typical outputs include:
 
---------------------------------------
+- `phi_XXXXXXXXXX.dat` — sampled 2D field
+- `psi_XXXXXXXXXX.dat` — 1D profile
+- `gw_XXXXXXXXXX.dat`, `gp_XXXXXXXXXX.dat` — static gradient profiles
+- `intKernel.dat` — the (scaled) kernel used in the run
+- (some implementations) `step_times.csv` — per-step timing diagnostics
 
-main.cu
+**Important:** to keep output size manageable, some C++ implementations *subsample* outputs
+(e.g. `sampleSkip = ceil(N/256)` before writing).
 
-&nbsp; Entry point. Detects GPU, reads CLI parameters, runs simulation.
+Benchmarks typically set `NO` very large to minimize disk I/O.
 
+---
 
+## Quick start
 
-src/
+All backends assume `kernelInput.dat` is available via a **relative path**.
+The simplest workflow is:
 
-&nbsp; CUDA kernels and core simulation routines.
+1) **Compile/build inside the subfolder** (if needed)  
+2) **Run from the repo root**, calling the binary/script via its subfolder path
+
+### C++ (serial)
+```bash
+g++ -O3 -std=c++17 cpp_serial/cpp_serial.cpp -o cpp_serial/sim_serial
+./cpp_serial/sim_serial 256
+```
+
+### C++ (OpenMP parallel)
+```bash
+g++ -O3 -std=c++17 -fopenmp cpp_parallel/cpp_parallel.cpp -o cpp_parallel/sim_cpu
+./cpp_parallel/sim_cpu 256
+```
 
+### C++/CUDA
+```bash
+# Compile the unity-build entry point. The included file selects the linear-gradient kernel:
+#   cpp_cuda/src/cuda_kernel_linear.cu (default)
+# Alternative available:
+#   cpp_cuda/src/cuda_kernel_sigmoid.cu
+nvcc -O3 -std=c++17 cpp_cuda/benchmark_main.cu -o cpp_cuda/sim_linear
+./cpp_cuda/sim_linear 256
+```
 
+### MATLAB
+From MATLAB, starting in the repo root:
+```matlab
+addpath('matlab_serial');
+addpath('matlab_vectorized');
+addpath('matlab_gpu_array');
 
-createKernel.py
+run_conservative_transport(256);                 % matlab_serial/
+run_conservative_transport_optimized(256);       % matlab_vectorized/
+run_conservative_transport_gpu(256);             % matlab_gpu_array/ (needs NVIDIA GPU + PCT)
+```
 
-&nbsp; Generates the interaction kernel and writes it to kernelInput.dat.
+### Julia
+From the repo root:
+```bash
+julia julia_cpu_serial/julia_cpu_serial.jl 256
+julia julia_cpu_parallel/julia_cpu_parallel.jl 256
+julia julia_cuda/julia_cuda.jl 256
+```
 
+Julia CUDA dependencies (install once):
+```bash
+julia -e 'using Pkg; Pkg.add(["CUDA", "Printf", "Dates", "DelimitedFiles"])'
+```
 
+---
 
-kernelInput.dat
+## Benchmarking workflow
 
-&nbsp; Precomputed kernel (tab-separated, single row). The executable loads this at startup.
+There are per-backend benchmark scripts (mostly Python or MATLAB) that run a sweep of grid sizes and parse
+the printed line:
 
+```
+-> avg step time: <mean> ms (+/- <std> ms)
+```
 
+Typical sweep is `N = 128 … 8192` (powers of two). Many scripts scale `T` as `~ 1/N` (sometimes with an extra `/12`) to keep runs tractable.
 
-colorMapModel.mat
+### Plotting benchmark results
 
-&nbsp; Optional: mapping from psi (volume fraction) to RGB, based on photographic calibration.
+`benchmark_plotter.m` expects text tables like:
 
+```
+N    avg_ms    std_ms
+```
 
+Example files already present at repo root (e.g., `cpp_cpu.txt`, `cpp_cuda.txt`, …) match that convention.
+If your benchmark script produces `.tsv`, you can rename or export to the expected `*.txt` files.
 
-condor\_docker\_interactive.sub / condor\_docker\_queue.sub
+In MATLAB (repo root):
+```matlab
+benchmark_plotter
+```
 
-&nbsp; HTCondor helpers (NOTE: queue submit file may require argument updates; see Section 7).
+---
 
+## Notes on reproducibility
 
+- **Working directory matters:** most code loads `kernelInput.dat` using a relative path.
+- **I/O dominates small runs:** use a very large `NO` to benchmark compute, not disk output.
+- **CPU affinity / denormals:** the C++ serial version explicitly pins to core 0 and enables FTZ/DAZ (see `cpp_serial/cpp_serial.cpp`).
 
-runSlurmJob.sh
+---
 
-&nbsp; Slurm helper (cluster-specific; adapt as needed).
+## Appendix — extracted subfolder READMEs (verbatim)
 
+### `cpp_parallel/README.txt`
+```text
+# Linux / macOS (GCC/Clang)
+g++ -O3 -std=c++17 -fopenmp simulation_cpu.cpp -o sim_cpu
 
+# Run
+./sim_cpu 256
 
-plot\_psi\_t.py + gnu\_plot\_script
+Argument List (in order)Only the first argument (N) is mandatory. The rest are optional and will default to the values defined in the code if omitted.PositionVariableTypeDescriptionDefault (if omitted)1NintGrid size (Required)None2ISFdoubleInteraction Scale Factor1.0003PSIdoubleAvg RBC volume fraction0.024ITdoubleTime increment (dt)0.0055TdoubleTotal simulation time1200.06NOdoubleOutput interval (steps)10007DdoubleDiffusion coefficient0.0Usage Examples1. Minimal (Just Grid Size):Runs with $N=256$ and all other parameters at default.Bash./sim_cpu 256
+2. Custom Physics (Grid + Physics):Runs with $N=512$, $ISF=1.0$, $PSI=0.05$, $dt=0.001$, TotalTime=500.0.Bash./sim_cpu 512 1.0 0.05 0.001 500.0
+3. Full Configuration:Explicitly sets every parameter, including diffusion.Bash./sim_cpu 256 1.0 0.02 0.005 1200.0 500 1e-9
+```
 
-&nbsp; Example post-processing using awk + gnuplot (run inside an output directory).
+### `cpp_serial/README.txt`
+```text
+256 0.01 0.02 0.01 120.0 200 1e-9
+g++ -O3 -std=c++17 cpp_serial.cpp -o sim_serial
 
+./sim_serial 256 1.0 0.02 0.005 100
 
+# Run on Core 0 with maximum priority (-20)
+sudo nice -n -20 taskset -c 0 ./sim_serial 256
 
+# Run on Core 0 only
+taskset -c 0 ./sim_serial 256
 
-
-3\) Requirements
-
----------------
-
-\- NVIDIA GPU with CUDA support
-
-\- nvcc / CUDA toolkit installed
-
-\- Python 3 + numpy (for createKernel.py)
-
-\- (Optional) gnuplot (for plot\_psi\_t.py workflow)
-
-
-
-
-
-4\) Quick start (local)
-
-----------------------
-
-
-
-Step A — Generate kernelInput.dat (recommended)
-
-Edit createKernel.py to set the physical kernel parameters (notably U, IZ, kernelN),
-
-then run:
-
-
-
-&nbsp; python3 createKernel.py
-
-
-
-This writes:
-
-&nbsp; kernelInput.dat
-
-
-
-Notes on parameters:
-
-\- U is defined inside createKernel.py (absolute interaction strength used for kernel construction).
-
-\- The simulation executable does NOT take U directly anymore (see ISF below).
-
-\- IZ in createKernel.py is intended to match the \*fine grid spacing\* used in the convolution.
-
-&nbsp; In the CUDA code the convolution integrates with (c\_IZ / subDiv), where:
-
-&nbsp;   c\_IZ = sysL/(N-1)   and fine\_spacing ≈ c\_IZ/subDiv
-
-
-
-If you change N, subDiv, or the physical length scaling, re-check IZ in createKernel.py.
-
-
-
-Step B — Compile
-
-Select the correct SM architecture for your GPU.
-
-
-
-Example (Tesla P100, sm\_60):
-
-&nbsp; nvcc -Xptxas -O3 -gencode arch=compute\_60,code=\[sm\_60,compute\_60] main.cu -o red\_patterns
-
-
-
-Example (A100, sm\_80):
-
-&nbsp; nvcc -Xptxas -O3 -gencode arch=compute\_80,code=\[sm\_80,compute\_80] main.cu -o red\_patterns
-
-
-
-Step C — Run
-
-The executable expects kernelInput.dat in the working directory.
-
-
-
-CLI:
-
-&nbsp; ./red\_patterns ISF PSI IT T NO
-
-
-
-Where:
-
-\- ISF : Interaction Scale Factor (dimensionless). Scales the loaded kernel linearly.
-
-\- PSI : Mean RBC volume fraction \[v/v] (e.g., 0.02)
-
-\- IT  : Time step \[s] (e.g., 5e-4)
-
-\- T   : Total simulation time \[s] (e.g., 1200)
-
-\- NO  : Output interval in iteration steps (integer)
-
-
-
-Example:
-
-&nbsp; ./red\_patterns 1.0 0.02 2e-3 1200.0 3000
-
-
-
-Defaults:
-
-If you omit arguments, defaults are taken from src/constants.cu.
-
-
-
-
-
-5\) Output format and directories
-
---------------------------------
-
-Each run creates a new timestamped output directory:
-
-
-
-&nbsp; sim\_YYYYMMDD\_HHMMSS/
-
-
-
-Inside you will find:
-
-\- phi\_##########.dat   (N x N array, tab-separated)
-
-\- psi\_##########.dat   (N vector, tab-separated)
-
-\- gw\_##########.dat    (N vector, tab-separated; “gradient wing” / external gradient term)
-
-\- gp\_##########.dat    (N vector, tab-separated; percoll / PC density gradient term)
-
-\- intKernel.dat        (kernel actually used, after scaling by ISF; saved with max double precision)
-
-
-
-Output cadence:
-
-\- The simulation writes at iteration i=1 and then every NO steps according to the internal check.
-
-&nbsp; (Practically: 1, 1+NO, 1+2\*NO, ...)
-
-
-
-Precision:
-
-\- intKernel.dat is saved with full double round-trip precision
-
-&nbsp; (scientific notation, max\_digits10).
-
-
-
-
-
-6\) Parameter meaning (at a glance)
-
-----------------------------------
-
-ISF (Interaction Scale Factor)
-
-\- This is the primary sweep knob at runtime.
-
-\- The kernel produced by createKernel.py is treated as a baseline; ISF scales it.
-
-
-
-PSI
-
-\- Mean volume fraction used by the model.
-
-
-
-IT, T, NT
-
-\- IT is the time step.
-
-\- T is total time.
-
-\- NT = ceil(T/IT) is computed internally.
-
-
-
-NO
-
-\- Output interval (in iteration steps).
-
-
-
-Grid size and geometry
-
-\- N is compile-time (const int N = 256 in src/constants.cu).
-
-\- subDiv and M are set in src/definitions.h.
-
-&nbsp; If you change N/subDiv you must recompile, and you should also verify kernel generation settings.
-
-
-
-
-
-7\) Cluster usage (HTCondor / Slurm)
-
------------------------------------
-
-
-
-HTCondor interactive (quick debug)
-
-1\) Start an interactive container session:
-
-&nbsp;  condor\_submit -i condor\_docker\_interactive.sub
-
-
-
-2\) Inside the session:
-
-&nbsp;  - ensure kernelInput.dat is present
-
-&nbsp;  - compile (nvcc ...)
-
-&nbsp;  - run (./red\_patterns ISF PSI IT T NO)
-
-
-
-HTCondor queued runs (IMPORTANT NOTE)
-
-\- condor\_docker\_queue.sub already transfers kernelInput.dat via:
-
-&nbsp;   transfer\_input\_files = kernelInput.dat
-
-
-
-\- HOWEVER: the example "arguments =" line in the submit file may still follow the legacy 8-argument
-
-&nbsp; format from older versions. The new executable expects ONLY:
-
-&nbsp;   ISF PSI IT T NO
-
-
-
-So update the submit file accordingly, e.g. if you sweep IT:
-
-&nbsp; arguments = 1.0 0.02 $(step\_size) 1200.0 3000
-
-
-
-Slurm
-
-Typical interactive run pattern:
-
-&nbsp; srun -J RedPatterns --partition=<...> --time=00:10:00 --ntasks=1 --cpus-per-task=1 \\
-
-&nbsp;      --gpus-per-task=1 --nodes=1 --mem=6GB --pty /bin/bash
-
-
-
-Then compile + run as in Section 4.
-
-Make sure kernelInput.dat is present in the working directory.
-
-
-
-
-
-8\) Post-processing examples
-
----------------------------
-
-The provided plot script expects psi\*.dat in the current working directory.
-
-Since outputs are now in sim\_\*/ directories, do:
-
-
-
-&nbsp; cd sim\_YYYYMMDD\_HHMMSS/
-
-&nbsp; python3 ../plot\_psi\_t.py
-
-
-
-This creates:
-
-&nbsp; psi\_t.dat
-
-&nbsp; psi\_t.png
-
-
-
-Color mapping (psi -> RGB)
-
-\- See colorMapModel.mat for the calibration fit functions and coefficients.
-
-
-
-
-
-9\) Notes on the numerical method (for users modifying the solver)
-
------------------------------------------------------------------
-
-\- Transport update is conservative (finite volume): net flux divergence updates phi.
-
-\- Upwind sampling is used for advective fluxes based on face velocity sign.
-
-\- Boundary flux is enforced to 0 at both ends (sealed box) to prevent mass drift.
-
-\- Legacy “degenerate diffusion” stabilization infrastructure is not part of the runtime update path.
-
-
-
-
-
-10\) Citation
-
-------------
-
-If you use this code, please cite the associated manuscript:
-
-https://www.pnas.org/doi/10.1073/pnas.2515704122
-
-
+g++ -O3 -std=c++17 -ffast-math simulation_serial.cpp -o sim_serial
+```

@@ -1,0 +1,3 @@
+julia -e 'using Pkg; Pkg.add(["CUDA", "Printf", "Dates"])'
+
+julia sim.jl 256
