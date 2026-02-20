@@ -257,7 +257,43 @@ This creates:
 
 If you use this code, please cite the associated manuscript:
 
+```
 [https://www.pnas.org/doi/10.1073/pnas.2515704122](https://www.pnas.org/doi/10.1073/pnas.2515704122)
+```
 
-```
-```
+8) Post-processing and Plotting
+To visualize the simulation results, three dedicated plotting scripts are provided (Python, Gnuplot, and MATLAB). These scripts read the 1D psi*.dat spatial arrays across all time steps, stack them into a 2D spacetime matrix (Time vs. Space), and render a high-quality SVG heatmap.
+
+Crucially, all three scripts contain the embedded mathematical functions and coefficients for the custom photographic color calibration, removing the need to load the external colorMapModel.mat file.
+
+Option A: Python (Recommended for Clusters)
+The Python script is optimized for headless Linux environments. It forces Matplotlib to use the non-interactive Agg backend, preventing display errors on servers without GUIs.
+
+Requirements: Python 3, numpy, and matplotlib.
+
+Usage: Pass the target simulation directory as a command-line argument.
+
+Bash
+python plotter_python.py sim_YYYYMMDD_HHMMSS
+Output: Generates sim_YYYYMMDD_HHMMSS.svg in your current working directory.
+
+Option B: Gnuplot (Fastest & Lightest)
+The Gnuplot script provides a highly efficient, native command-line plotting method. It uses internal system calls (ls -v and cat) to dynamically stitch the 1D .dat files into a 2D surface at runtime.
+
+Requirements: gnuplot and standard Linux utilities (tr, cat, ls).
+
+Usage: Execute using the -c flag to pass the directory as an argument.
+
+Bash
+gnuplot -c plotter_gnuplot.gp sim_YYYYMMDD_HHMMSS
+Output: Generates sim_YYYYMMDD_HHMMSS.svg in your current working directory.
+
+Option C: MATLAB
+If you prefer a local GUI workflow, the MATLAB script provides identical outputs using native MATLAB rendering.
+
+Usage: Open plotter_matlab.m in the MATLAB editor. Manually update the simDirName variable at the top of the script to match your target directory.
+
+Matlab
+% Adjust this variable to point to your target simulation directory
+simDirName = 'sim_YYYYMMDD_HHMMSS'; 
+Output: Run the script to generate and save the SVG file natively.
