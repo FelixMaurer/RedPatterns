@@ -1,5 +1,3 @@
-namespace fs = std::filesystem;
-
 void printHeader(int n_grid, int m_grid, int nt_steps, double dz_val, double dt_val, double psi_val, double isf_val) {
     std::cout << "\n============================================================\n";
     std::cout << "   cuda simulation: conservative finite volume transport    \n";
@@ -46,7 +44,13 @@ std::string createSimulationDirectory() {
     std::stringstream ss;
     ss << "sim_" << std::put_time(std::localtime(&in_time_t), "%Y%m%d_%H%M%S");
     std::string dirName = ss.str();
-    if (!fs::exists(dirName)) fs::create_directory(dirName);
+    
+    struct stat info;
+    if (stat(dirName.c_str(), &info) != 0) {
+        // Directory does not exist, create it with read/write/execute permissions
+        mkdir(dirName.c_str(), 0777); 
+    }
+    
     return dirName + "/";
 }
 
