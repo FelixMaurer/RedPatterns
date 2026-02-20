@@ -224,43 +224,6 @@ Make sure `kernelInput.dat` is present in the working directory.
 
 ---
 
-## 8) Post-processing examples
-
-The provided plot script expects `psi*.dat` in the current working directory. Since outputs are now in `sim_*/` directories, do:
-
-```bash
-cd sim_YYYYMMDD_HHMMSS/
-python3 ../plot_psi_t.py
-```
-
-This creates:
-
-* `psi_t.dat`
-* `psi_t.png`
-
-**Color mapping (psi -> RGB)**
-
-* See `colorMapModel.mat` for the calibration fit functions and coefficients.
-
----
-
-## 9) Notes on the numerical method (for users modifying the solver)
-
-* Transport update is conservative (finite volume): net flux divergence updates phi.
-* Upwind sampling is used for advective fluxes based on face velocity sign.
-* Boundary flux is enforced to 0 at both ends (sealed box) to prevent mass drift.
-* Legacy “degenerate diffusion” stabilization infrastructure is not part of the runtime update path.
-
----
-
-## 10) Citation
-
-If you use this code, please cite the associated manuscript:
-
-```
-[https://www.pnas.org/doi/10.1073/pnas.2515704122](https://www.pnas.org/doi/10.1073/pnas.2515704122)
-```
-
 ## 8) Post-processing and Plotting
 
 To visualize the simulation results, three dedicated plotting scripts are provided (Python, Gnuplot, and MATLAB). These scripts read the 1D `psi*.dat` spatial arrays across all time steps, stack them into a 2D spacetime matrix (Time vs. Space), and render a high-quality SVG heatmap. 
@@ -297,3 +260,21 @@ If you prefer a local GUI workflow, the MATLAB script provides identical outputs
   ```
 * **Output**: Run the script to generate and save the SVG file natively.
 
+---
+
+## 9) Notes on the numerical method (for users modifying the solver)
+
+* Transport update is conservative (finite volume): net flux divergence updates phi.
+* Upwind sampling is used for advective fluxes based on face velocity sign.
+* Boundary flux is enforced to 0 at both ends (sealed box) to prevent mass drift.
+* Legacy “degenerate diffusion” stabilization infrastructure is not part of the runtime update path.
+
+---
+
+## 10) Citation
+
+If you use this code, please cite the associated manuscript:
+
+```
+[https://www.pnas.org/doi/10.1073/pnas.2515704122](https://www.pnas.org/doi/10.1073/pnas.2515704122)
+```
