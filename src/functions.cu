@@ -237,12 +237,16 @@ void runSim(){
 
     for (int i = 0; i < NT; i++){
         CuKernelInte  <<< gridN,  blockN >>> (d_phi, d_psi);
+
+#ifndef TAYL
         CuKernelCmpA  <<< gridN,  blockN >>> (d_psi, d_alp);
         CuKernelSplineCoeffs<<<1,1>>>(d_psi, d_alp, d_b, d_c, d_d);
         CuKernelSplineEval <<< gridM, blockM >>> (d_psi, d_b, d_c, d_d, d_psiIntp);
         CuKernelConv <<< gridM, blockM, (blockM.x + kernelN - 1) * sizeof(double) >>> (d_psiIntp, d_IIntp, d_intKernel);
         CuKernelDSmp <<< gridN, blockN >>> (d_IIntp, d_I);
-        
+#else
+        CuKernelTayl <<< gridN, blockN >>>(d_psi, d_I);
+#endif
         CuKernelGrad <<< gridN, blockN >>> (d_percoll, t);
         CuKernelWing <<< gridN, blockN >>> (d_percoll, d_gradWing, t);
 

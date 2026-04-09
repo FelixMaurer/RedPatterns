@@ -4,6 +4,10 @@
 // RBC parameters
 double PSI = 0.02; // [v/v] RBC average volume fraction
 double ISF = 1.000;
+
+// Nu and Mu values from old simulation branch
+__constant__ double c_nu = -9.6217e-30;
+__constant__ double c_mu = -1.5194205e-36;
 // time iteration parameters
 double IT = 0.005;   // [s] time increment 
 double T = 1200.0; // [s] total simulation time
